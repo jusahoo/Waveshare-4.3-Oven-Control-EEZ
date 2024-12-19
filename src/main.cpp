@@ -47,62 +47,84 @@
 #include <vars.h>
 #include <actions.h>
 ////////////////////////
-//#include <WiFi.h>
+// #include <WiFi.h>
 #include <config.h>
 #include <time.h>
 #include <esp_sntp.h>
-
-
 
 #include <TelnetStream.h>
 
 #include <ElegantOTA.h>
 
 #if defined(ESP8266)
-  #include <ESP8266WiFi.h>
-  #include <WiFiClient.h>
-  #include <ESP8266WebServer.h>
-  ESP8266WebServer server(80);
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+ESP8266WebServer server(80);
 #elif defined(ESP32)
-    #include <WiFi.h>
-  #include <WiFiClient.h>
-  #include <WebServer.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
 
-  WebServer server(80);
+WebServer server(80);
 #endif
 
 #include <ModbusMaster.h>
 
-
 // instantiate ModbusMaster object
 ModbusMaster node;
 
-uint8_t arduSlaveAddr = 0x01;     //Arduino slave address
-uint8_t moduleSlaveAddr = 0x02;   //Slave address for the Waveshare slave module
+uint8_t arduSlaveAddr = 0x01;   // Arduino slave address
+uint8_t moduleSlaveAddr = 0x02; // Slave address for the Waveshare slave module
 
-uint16_t discreteOffset = 10000; //Offset for discrete register 
+uint16_t discreteOffset = 10000; // Offset for discrete register
 
-uint16_t doorCloseRegister = 12;  //Modbus discrete register to check if door is closed
+uint16_t doorCloseRegister = 12; // Modbus discrete register to check if door is closed
 bool doorClosed = false;
 
-uint16_t lowOrHighReg = 11;  //Modbus discrete register to check if relay is Low to On and Hig to off. 1 is low to on, 0 is high to on
+uint16_t lowOrHighReg = 11; // Modbus discrete register to check if relay is Low to On and Hig to off. 1 is low to on, 0 is high to on
 
+uint16_t probeResReg = 1; // Temperature's probe resistance
 
+// meassure resistance from probe tembperature
+int probeRes = 0;
 
+const uint16_t doorClosedReg = 12; // equivalent 10 10014 discrete address for master in base 1
 
-/*
-  RegAddr Description                 Resolution
-  0x0000  Voltage value               1LSB correspond to 0.1V
-  0x0001  Current value low 16 bits   1LSB correspond to 0.001A
-  0x0002  Current value high 16 bits
-  0x0003  Power value low 16 bits     1LSB correspond to 0.1W
-  0x0004  Power value high 16 bits
-  0x0005  Energy value low 16 bits    1LSB correspond to 1Wh
-  0x0006  Energy value high 16 bits
-  0x0007  Frequency value             1LSB correspond to 0.1Hz
-  0x0008  Power factor value          1LSB correspond to 0.01
-  0x0009  Alarm status  0xFFFF is alarm，0x0000is not alarm
-*/
+// Oven Lights Parameters
+const uint16_t lightReg = 4; // Register address for light
+
+// Oven Fan Parameters
+
+const uint16_t fanReg = 5;
+bool fanIsOn = false;
+
+// door Motor Parameters
+
+const uint16_t doorMotorReg = 6;
+bool doorIsLocked = false;
+
+// Top Resistance Parameters
+
+const uint16_t topResReg = 7;
+bool topResIsOn = false;
+
+// Bottom resistance Parameters
+
+const uint16_t botResReg = 8;
+bool botResIsOn = false;
+
+// Communication Check Register
+const uint16_t commCheckReg = 13;
+bool commIsOk = false;
+
+//Define relay type
+
+bool LowToOnHighToOff = 1 ; //If true the relays closes on Low, opens on High
+
+    int On =  0;
+    int Off = 1;
+
 
 
 uint32_t i = 0;
@@ -141,7 +163,7 @@ int tempActual = 0; // variable to store de actual temperature
 
 bool startClicked = false;
 bool processProgram = false;
-bool bLCtl = true;    //backlight control
+bool bLCtl = true; // backlight control
 
 ////////////////////////
 
@@ -157,20 +179,19 @@ bool bLCtl = true;    //backlight control
 #define I2C_MASTER_SDA_IO 8
 #define I2C_MASTER_SCL_IO 9
 
-#define RS485_RX_PIN  15
-#define RS485_TX_PIN  16
+#define RS485_RX_PIN 15
+#define RS485_TX_PIN 16
 
-//Redefine serial port name 
+// Redefine serial port name
 #define RS485 Serial1
-
-
 
 // instantiate ModbusMaster object
 
-
+// Used Pins
+const int LedPin = 13;  // Change that to match your led
+const int TxenPin = -1; // -1 disables the feature, change that if you are using an RS485 driver, this pin would be connected to the DE and /RE pins of the driver.
 
 ESP_IOExpander *expander = new ESP_IOExpander_CH422G(I2C_MASTER_NUM, ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000);
-
 
 /**
 /* To use the built-in examples and demos of LVGL uncomment the includes below respectively.
@@ -277,8 +298,7 @@ void lvgl_port_task(void *arg)
 // Replace with your network credentials
 const char *wifiSSID = SECRET_SSID;
 const char *wifiPASS = SECRET_PASS;
-const char* wifiHostName = "esp32-oven-ctl";
-
+const char *wifiHostName = "esp32-oven-ctl";
 
 const int wifiMaxRetries = 5;
 int wifiRetries = 0;
@@ -358,7 +378,6 @@ void printWifiStatus()
   Serial.println(ip);
   String ipTxt = WiFi.localIP().toString();
   lv_label_set_text_fmt(objects.ip_addr_lbl, "%s", ipTxt.c_str());
-
 }
 
 void connectWifi()
@@ -462,8 +481,8 @@ void CheckTimerRem()
 
     if (timerRem > 0)
     {
-      //Serial.print("Timer Remaining= ");
-      //Serial.println(timerRem);
+      // Serial.print("Timer Remaining= ");
+      // Serial.println(timerRem);
     }
     else
     {
@@ -533,8 +552,8 @@ void CheckStartClicked()
   // timerSet = get_var_timer_set_min();
 
   // Serial.print(clicked);
-  //Serial.print("timerRem:  ");
-  //Serial.println(timerRem);
+  // Serial.print("timerRem:  ");
+  // Serial.println(timerRem);
   if (clicked == true)
   {
 
@@ -568,8 +587,8 @@ void CheckStartClicked()
     }
   }
   StartBtnStyle();
-  //Serial.print("Process of Program: ");
-  //Serial.println(processProgram);
+  // Serial.print("Process of Program: ");
+  // Serial.println(processProgram);
 
   if (programStopped)
   {
@@ -585,68 +604,132 @@ void CheckStartClicked()
 
 ////////////////////////////
 
-void cntlRemPin(u_int8_t remoteID , uint16_t pinNum, bool state){
-
-
-  
+void cntlRemPin(u_int8_t remoteID, uint16_t pinNum, bool state)
+{
 }
 
+void WriteCoilToSlave(uint8_t slaveAddr = 0x01, uint16_t regAddress = 13, int value = 1)
+{
 
-void WriteCoilToSlave(uint8_t slaveAddr = 0x01, uint16_t regAddress = 13, int value = 1){
-
-    uint8_t result;
+  uint8_t result;
+  // int result;
   // uint16_t registerAddress = 0x0002    //Register equivalent to Arduino pin number
-    node.begin(arduSlaveAddr, RS485);
-    result = node.writeSingleCoil(regAddress, value);
+  node.begin(arduSlaveAddr, RS485);
+  result = node.writeSingleCoil(regAddress, value);
+  Serial.println(result);
+  if (result == node.ku8MBSuccess)
+  {
     Serial.println(result);
-      if (result == node.ku8MBSuccess)
-      {
-        Serial.println(result);
-        Serial.print("Coil written OK: ");
-        Serial.println(regAddress);
-        TelnetStream.println("Coil written OK");
-      } else {
-        Serial.println(result);
-        Serial.print("Coil Write ERROR:  ");
-                Serial.println(regAddress);
-        TelnetStream.println("Coil Write ERROR");
-      }    
+    Serial.print("Coil written OK: ");
+    Serial.println(regAddress);
+    TelnetStream.println("Coil written OK");
+  }
+  else
+  {
+    Serial.println(result);
+    Serial.print("Coil Write ERROR:  ");
+    Serial.println(regAddress);
+    TelnetStream.println("Coil Write ERROR");
+  }
 }
 
+bool readDiscreteReg(uint8_t slaveAddr, uint16_t registro)
+{
 
-bool readDiscreteReg(uint8_t slaveAddr, uint16_t doorCloseRegister){
-  
   node.begin(slaveAddr, RS485);
   bool res = false;
 
+  uint8_t result = node.readDiscreteInputs(registro, 1);
 
-  uint8_t  result = node.readDiscreteInputs(doorCloseRegister, 1);
-  
   TelnetStream.print("Discrete Read = ");
-  TelnetStream.println(result);
+  TelnetStream.println(node.getResponseBuffer(0));
   Serial.print("Discrete Read = ");
-  Serial.println(result);
+  Serial.println(node.getResponseBuffer(0));
 
-  if (result = 1){
+  if (result = 1)
+  {
     res = true;
-  } else if (result = 0 )
+  }
+  else if (result = 0)
   {
     res = false;
-  } else {
-    Serial.println ("Discrete Read error, program stoped");
-    TelnetStream.println ("Discrete Read error, program stoped");
-
-    processProgram = false;      
   }
-  
+  else
+  {
+    Serial.println("Discrete Read error, program stoped");
+    TelnetStream.println("Discrete Read error, program stoped");
+
+    processProgram = false;
+  }
+
   return res;
 
-
-
   // uint16_t registerAddress = 0x0002    //Register equivalent to Arduino pin number
-
 }
 
+int readHoldingReg(uint8_t slaveAddr, uint16_t registro)
+{
+
+  int res = 0;
+  node.begin(slaveAddr, RS485);
+
+  uint8_t result; // Variable to store the result of Modbus operations
+
+  // Read 2 holding registers starting at address 0x0000
+  // This function sends a Modbus request to the slave to read the registers
+  result = node.readHoldingRegisters(registro, 1);
+
+  // If the read is successful, process the data
+  if (result == node.ku8MBSuccess)
+  {
+    // Get the response data from the response buffer
+
+    TelnetStream.print("Holding Read Reg : ");
+    TelnetStream.print(registro);
+    TelnetStream.print("  data = ");
+    TelnetStream.println(node.getResponseBuffer(0));
+
+    Serial.print("Holding Read Reg : ");
+    Serial.print(registro);
+    Serial.print("  data = ");
+    Serial.println(node.getResponseBuffer(0));
+
+    res = node.getResponseBuffer(0);
+  }
+  else
+  {
+    // Print an error message if the read fails
+    Serial.print("Modbus read failed Reg: ");
+    Serial.print(registro);
+    Serial.print(" result code: ");
+    Serial.println(result, HEX); // Print the error code in hexadecimal format
+    res = 0;
+  }
+
+  return res;
+}
+
+void CommCheck()
+{
+  int i = 0;
+  i = readDiscreteReg(1, commCheckReg);
+
+  Serial.printf("CommCheck i  = %i\n", i);
+
+  if (i == 1){
+    commIsOk = true;
+    Serial.println("Comm is Ok");
+  } else {
+    commIsOk = false;
+    Serial.println("Comm Lost");
+  }
+}
+
+void TurnLight(bool estado){
+  if (commIsOk){
+  WriteCoilToSlave(arduSlaveAddr, lightReg, estado);
+  }
+}
 
 ///////////////
 
@@ -655,9 +738,7 @@ void setup()
   Serial.begin(38400); /* prepare for possible serial debug */
   delay(1000);
 
-  Serial2.begin(115200, SERIAL_8N1, 15,16);
-
-
+  Serial2.begin(115200, SERIAL_8N1, 15, 16);
 
   String LVGL_Arduino = "Hello LVGL! ";
   LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
@@ -711,8 +792,8 @@ void setup()
    */
   Serial.println("Initialize IO expander");
   /* Initialize IO expander */
-  //ESP_IOExpander *expander = new ESP_IOExpander_CH422G(I2C_MASTER_NUM, ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000, I2C_MASTER_SCL_IO, I2C_MASTER_SDA_IO);
-//  ESP_IOExpander *expander = new ESP_IOExpander_CH422G(I2C_MASTER_NUM, ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000);
+  // ESP_IOExpander *expander = new ESP_IOExpander_CH422G(I2C_MASTER_NUM, ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000, I2C_MASTER_SCL_IO, I2C_MASTER_SDA_IO);
+  //  ESP_IOExpander *expander = new ESP_IOExpander_CH422G(I2C_MASTER_NUM, ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000);
   expander->init();
   expander->begin();
   expander->multiPinMode(TP_RST | LCD_BL | LCD_RST | SD_CS | USB_SEL, OUTPUT);
@@ -726,7 +807,6 @@ void setup()
 
   /* Start panel */
   panel->begin();
-
 
   /* Create a task to run the LVGL task periodically */
   lvgl_mux = xSemaphoreCreateRecursiveMutex();
@@ -750,37 +830,44 @@ void setup()
   // nitialize timerSet
   set_var_timer_set_min(0);
 
-
   /////////////////////////////////////////
-TelnetStream.begin();
-  server.on("/", []() {
-    server.send(200, "text/plain", "Hi! This is ElegantOTA Demo.");
-  });
+  TelnetStream.begin();
+  server.on("/", []()
+            { server.send(200, "text/plain", "Hi! This is ElegantOTA Demo."); });
 
-  ElegantOTA.begin(&server);    // Start ElegantOTA
+  ElegantOTA.begin(&server); // Start ElegantOTA
   server.begin();
   Serial.println("HTTP server started");
 
-    //Initialize 485 device
+  // Initialize 485 device
   RS485.begin(38400, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);
-  while (!RS485) {
-    delay(10);//Wait for initialization to succeed
+  while (!RS485)
+  {
+    delay(10); // Wait for initialization to succeed
+  }
+
+  // Define relay type
+  LowToOnHighToOff  = readDiscreteReg(1, lowOrHighReg);
+  Serial.printf("LowToOnHighToOff = %i\n", LowToOnHighToOff);
+  TelnetStream.printf("LowToOnHighToOff = %i\n", LowToOnHighToOff);
+
+  if (LowToOnHighToOff == 1){
+     On  = 0;
+     Off = 1;
+  } else {
+     On  =  1;
+     Off  = 0;
   }
 
 
 
-
 }
-
-
 
 void loop()
 {
   actualMillis = millis();
   server.handleClient();
   ElegantOTA.loop();
-
-
 
   // run every 100 millia
   if (actualMillis - prevEvery100Millis >= every100Millis)
@@ -791,7 +878,6 @@ void loop()
     ReadTimerSet();
 
     CheckTimerRem();
-
 
     CheckStartClicked();
     StartBtnStyle();
@@ -807,24 +893,26 @@ void loop()
     prevEvery500Millis = actualMillis;
   }
 
-  //Run every 5 seconds
-  if(actualMillis - prevEveryFiveSec >= everyFiveSec){
-    
-    WriteCoilToSlave(0x01, 4, 0);
-        //WriteCoilToSlave(1, 5, 0);
-      //    WriteCoilToSlave(1, 6, 0);
-    //          WriteCoilToSlave(1, 7, 0);
-  //WriteCoilToSlave(1, 8, 0);
-      WriteCoilToSlave(0x01, 809, 0);
+  // Run every 5 seconds
+  if (actualMillis - prevEveryFiveSec >= everyFiveSec)
+  {
 
-      delay(2000);  
-    WriteCoilToSlave(0x01,4,1);
-    //    WriteCoilToSlave(1, 5, 1);
-    //      WriteCoilToSlave(1, 6, 1);
-    //          WriteCoilToSlave(1, 7, 1);
-  //WriteCoilToSlave(1, 8, 1);
-    WriteCoilToSlave(0x01, 809, 1);
-    //TelnetStream.println("Inside Loop");
+    CommCheck();
+
+/*
+    for (uint8_t i = 4; 13; i++)
+    {
+      WriteCoilToSlave(1, i, 0);
+      readDiscreteReg(1, i);
+      delay(50);
+      WriteCoilToSlave(1, i, 1);
+      readDiscreteReg(1, i);
+      delay(50);
+      readHoldingReg(1, 1);
+    }
+  */
+
+    // TelnetStream.println("Inside Loop");
     /*
       TelnetStream.println(WiFi.localIP());
       if (bLCtl) {
@@ -840,24 +928,20 @@ void loop()
 
       }
     */
-     // Serial.println(readDiscreteReg(0x01, doorCloseRegister + discreteOffset));
-     // Serial.print("Low to On: ");
-     // Serial.println( Serial.println(readDiscreteReg(0x01, lowOrHighReg + discreteOffset)));
-  
-    
-/*
-    WriteDigiPin(2, true);
-    delay(2000);
-    WriteDigiPin(2, false);
-    delay(1000);
-*/
-     // Write message to the slave
+    // Serial.println(readDiscreteReg(0x01, doorCloseRegister + discreteOffset));
+    // Serial.print("Low to On: ");
+    // Serial.println( Serial.println(readDiscreteReg(0x01, lowOrHighReg + discreteOffset)));
 
+    /*
+        WriteDigiPin(2, true);
+        delay(2000);
+        WriteDigiPin(2, false);
+        delay(1000);
+    */
+    // Write message to the slave
 
     prevEveryFiveSec = actualMillis;
   }
-
-
 
   ///////
 
