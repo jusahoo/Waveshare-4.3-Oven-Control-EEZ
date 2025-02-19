@@ -78,3 +78,50 @@ void action_goto_status_page_act(lv_event_t *e) {
     // TODO: Implement action goto_status_page_act here
     loadScreen(SCREEN_ID_STATUS_PAGE);
 }
+
+void action_goto_test_page(lv_event_t *e) {
+    // TODO: Implement action goto_test_page here
+    loadScreen(SCREEN_ID_TEST_COMPONENTS_PAGE );
+}
+
+
+void action_light_control_act(lv_event_t *e) {
+    // TODO: Implement action light_control_act here
+  set_var_light_btn_clicked(true);
+
+}
+
+void action_fan_control_act(lv_event_t *e) {
+    // TODO: Implement action fan_control_act here
+    set_var_fan_btn_clicked(true);
+
+}
+
+void action_door_motor_control_act(lv_event_t *e) {
+    // TODO: Implement action door_motor_control_act here
+    set_var_door_motor_btn_clicked(true);
+
+}
+
+
+void action_bot_res_control_act(lv_event_t *e) {
+    // TODO: Implement action bot_res_control_act here
+    set_var_bot_res_btn_clicked(true);  
+}
+
+void action_top_res_control_act(lv_event_t *e) {
+    // TODO: Implement action top_res_control_act here
+    set_var_top_res_btn_clicked(true);
+}
+
+void action_bake_ctl_act(lv_event_t *e) {
+  // TODO: Implement action bake_ctl_act here
+  set_var_heating_mode(1);
+}
+
+
+void action_broil_ctl_act(lv_event_t *e) {
+  // TODO: Implement action broil_ctl_act here
+  set_var_heating_mode(2);
+
+}

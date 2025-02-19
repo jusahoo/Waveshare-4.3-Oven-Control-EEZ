@@ -79,17 +79,17 @@ uint8_t moduleSlaveAddr = 0x02; // Slave address for the Waveshare slave module
 
 uint16_t discreteOffset = 10000; // Offset for discrete register
 
-uint16_t doorCloseRegister = 12; // Modbus discrete register to check if door is closed
-bool doorClosed = false;
-
 uint16_t lowOrHighReg = 11; // Modbus discrete register to check if relay is Low to On and Hig to off. 1 is low to on, 0 is high to on
 
-uint16_t probeResReg = 1; // Temperature's probe resistance
+//uint16_t probeResReg = 1; // Temperature's probe resistance
 
 // meassure resistance from probe tembperature
 int probeRes = 0;
 
-const uint16_t doorClosedReg = 12; // equivalent 10 10014 discrete address for master in base 1
+const uint16_t doorClosedReg = 9; // equivalent 10 10014 discrete address for master in base 1
+bool doorClosed = false;
+
+
 
 // Oven Lights Parameters
 const uint16_t lightReg = 4; // Register address for light
@@ -114,18 +114,25 @@ bool topResIsOn = false;
 const uint16_t botResReg = 8;
 bool botResIsOn = false;
 
+const uint16_t ventilatorReg = 10;
+bool ventilatorIsOn = false;
+
 // Communication Check Register
-const uint16_t commCheckReg = 13;
+const uint16_t commCheckInReg = 20;
+const uint16_t randomCodeReg = 20; //will be converted to 40020 0r 40019 to be written at slave
+const uint16_t commCheckOutReg = 21; 
+bool commIsOK = false;
+int randValReceived = 0;
+int prevRandValReceived = 0;
+
 bool commIsOk = false;
 
-//Define relay type
+// Define relay type
 
-bool LowToOnHighToOff = 1 ; //If true the relays closes on Low, opens on High
+bool LowToOnHighToOff = 1; // If true the relays closes on Low, opens on High
 
-    int On =  0;
-    int Off = 1;
-
-
+int On = 0;
+int Off = 1;
 
 uint32_t i = 0;
 
@@ -134,7 +141,7 @@ unsigned long actualMillis = 0;
 unsigned long prevMillis = 0;
 unsigned long every100Millis = 100;
 unsigned long prevEvery100Millis = 0;
-unsigned long every500Millis = 5000;
+unsigned long every500Millis = 500;
 unsigned long prevEvery500Millis = 0;
 unsigned long everyOneSec = 1000;
 unsigned long prevEveryOneSec = 0;
@@ -158,13 +165,23 @@ int timeStartClicked = 0;
 int tempSetPoint = 0; // to store temperature setpoint
 int prevTempSetPoint = -1;
 int tempActual = 0; // variable to store de actual temperature
+const uint16_t tempActualReg = 1;  //Holding register address to read temperature
+int lowToOn = tempSetPoint - 10;   //Lowest temperature to restart Heat
+int highToOff = tempSetPoint + 10;
+bool tempSetReachedOnce = false;  //True id tempsetpoint reached first time
+int heatModeClicked = 0; //0 all off, 1, Bake On Broil Off, 2 Broil on Bake Off, 3 Both On
 
 /// Flags definition
 
 bool startClicked = false;
 bool processProgram = false;
 bool bLCtl = true; // backlight control
-
+bool lightBtnClicked = false;
+bool fanBtnClicked = false;
+bool DoorMotorBtnClicked = false;
+bool topResBtnClicked = false;  
+bool botResBtnClicked = false;
+bool hasToTurnOffAll = false;
 ////////////////////////
 
 // Extend IO Pin define
@@ -457,6 +474,7 @@ void ReadTempSetPoint()
   }
 }
 
+
 void ReadTimerSet()
 {
   timerSet = get_var_timer_set_min();
@@ -487,6 +505,8 @@ void CheckTimerRem()
     else
     {
       timerRem = 0;
+      hasToTurnOffAll = true;
+      processProgram = false;
     }
     if ((timerRem > 0) && (timerRem != previousTR))
     {
@@ -566,6 +586,7 @@ void CheckStartClicked()
       programStopped = true;
       clicked = false;
       Serial.println("Process stoped");
+     hasToTurnOffAll = true;
     }
 
     if (timerSet == 0)
@@ -583,6 +604,7 @@ void CheckStartClicked()
       timeStartClicked = int(actualMillis / 60000);
       timerRem = timerSet - int((actualMillis - timeStartClicked) / 60000);
       Serial.println("Process of program true");
+      hasToTurnOffAll = false;
       delay(1);
     }
   }
@@ -596,6 +618,7 @@ void CheckStartClicked()
     set_var_timer_remain_min(0);
     timerRem = 0;
     CheckTimerRem();
+    hasToTurnOffAll = true;
   }
 
   set_var_start_clicked(false);
@@ -632,6 +655,32 @@ void WriteCoilToSlave(uint8_t slaveAddr = 0x01, uint16_t regAddress = 13, int va
     TelnetStream.println("Coil Write ERROR");
   }
 }
+
+void WriteHoldToSlave(uint8_t slaveAddr = 0x01, uint16_t regAddress = 20, int value = 0)
+{
+
+  uint8_t result;
+  // int result;
+  // uint16_t registerAddress = 0x0002    //Register equivalent to Arduino pin number
+  node.begin(arduSlaveAddr, RS485);
+  result = node.writeSingleRegister(regAddress, value);
+  Serial.println(result);
+  if (result == node.ku8MBSuccess)
+  {
+    Serial.println(result);
+    Serial.print("Holding Register written OK: ");
+    Serial.println(regAddress);
+    TelnetStream.println("Holding Reg written OK");
+  }
+  else
+  {
+    Serial.println(result);
+    Serial.print("Holding Reg  Write ERROR:  ");
+    Serial.println(regAddress);
+    TelnetStream.println("Holding Reg  Write ERROR");
+  }
+}
+
 
 bool readDiscreteReg(uint8_t slaveAddr, uint16_t registro)
 {
@@ -709,27 +758,367 @@ int readHoldingReg(uint8_t slaveAddr, uint16_t registro)
   return res;
 }
 
+
+int readInputReg(uint8_t slaveAddr, uint16_t registro)
+{
+
+  int res = 0;
+  node.begin(slaveAddr, RS485);
+
+  uint8_t result; // Variable to store the result of Modbus operations
+
+  // Read 2 holding registers starting at address 0x0000
+  // This function sends a Modbus request to the slave to read the registers
+  result = node.readInputRegisters(registro, 1);
+
+  // If the read is successful, process the data
+  if (result == node.ku8MBSuccess)
+  {
+    // Get the response data from the response buffer
+
+    TelnetStream.print("Input Read Reg : ");
+    TelnetStream.print(registro);
+    TelnetStream.print("  data = ");
+    TelnetStream.println(node.getResponseBuffer(0));
+
+    Serial.print("Input Read Reg : ");
+    Serial.print(registro);
+    Serial.print("  data = ");
+    Serial.println(node.getResponseBuffer(0));
+
+    res = node.getResponseBuffer(0);
+  }
+  else
+  {
+    // Print an error message if the read fails
+    Serial.print("Modbus read failed Reg: ");
+    Serial.print(registro);
+    Serial.print(" result code: ");
+    Serial.println(result, HEX); // Print the error code in hexadecimal format
+    res = 0;
+  }
+
+  return res;
+}
+
+
+
 void CommCheck()
 {
+
+  int randomCode = random(1, 62000);
+  WriteHoldToSlave(arduSlaveAddr,randomCodeReg, randomCode);
+
+
+
+
+
   int i = 0;
-  i = readDiscreteReg(1, commCheckReg);
+  i = readDiscreteReg(1, commCheckInReg);
 
   Serial.printf("CommCheck i  = %i\n", i);
 
-  if (i == 1){
+  if (i == 1)
+  {
     commIsOk = true;
     Serial.println("Comm is Ok");
-  } else {
+  }
+  else
+  {
     commIsOk = false;
     Serial.println("Comm Lost");
   }
 }
 
-void TurnLight(bool estado){
-  if (commIsOk){
-  WriteCoilToSlave(arduSlaveAddr, lightReg, estado);
+void TurnLight(bool estado)
+{
+  if (commIsOk)
+  {
+    WriteCoilToSlave(arduSlaveAddr, lightReg, estado);
   }
 }
+
+void LightButtomAct()
+{
+  lightBtnClicked = get_var_light_btn_clicked();
+  bool state = get_var_light_state();
+
+
+  if (lightBtnClicked)
+  {
+
+    Serial.println("Light Button CLicked");
+    if (state == Off){
+      TurnLight(On);
+      set_var_light_state(On);
+    }
+    else {
+      TurnLight(Off);
+      set_var_light_state(Off);
+    }
+
+
+    lightBtnClicked = false;
+    set_var_light_btn_clicked(false);
+  }
+}
+
+void TurnFan(bool estado)
+{
+  if (commIsOk)
+  {
+    WriteCoilToSlave(arduSlaveAddr, fanReg, estado);
+    WriteCoilToSlave(arduSlaveAddr, 10, estado);
+  }
+}
+
+void FanBtnAct(){
+  fanBtnClicked = get_var_fan_btn_clicked();
+  bool estado = get_var_fan_state();
+
+  if (fanBtnClicked){
+      TurnFan(!estado);
+      fanIsOn = !estado;
+      set_var_fan_state(!estado);
+      set_var_fan_btn_clicked(false);
+      TelnetStream.printf("Fan State = %i\n", fanIsOn);
+      Serial.printf("Fan State = %i\n", fanIsOn);
+
+  }
+}
+
+void TurnDoorMotor(bool estado)
+{
+  if (commIsOk)
+  {
+    WriteCoilToSlave(arduSlaveAddr, doorMotorReg, estado);
+  }
+}
+
+void DoorMotorBtnAct(){
+  DoorMotorBtnClicked = get_var_door_motor_btn_clicked();
+  bool estado = get_var_door_motor_state();
+
+  if (DoorMotorBtnClicked){
+      TurnDoorMotor(!estado);
+      doorIsLocked = !estado;
+      set_var_door_motor_state(!estado);
+      set_var_door_motor_btn_clicked(false);
+      TelnetStream.printf("Door Motor State = %i\n", doorIsLocked);
+      Serial.printf("Door Motor State = %i\n", doorIsLocked);
+
+  }
+}
+
+void  TurnBotRes(bool estado){
+  if (commIsOk)
+  {
+    WriteCoilToSlave(arduSlaveAddr, botResReg, estado);
+  }
+}
+
+void BotResBtnAct(){
+  botResBtnClicked = get_var_bot_res_btn_clicked();
+  bool estado = botResIsOn;
+
+  if (botResBtnClicked){
+      TurnBotRes(!estado);
+      botResIsOn = !estado;
+      set_var_bot_res_btn_clicked(false);
+      TelnetStream.printf("Bot Res State = %i\n", botResIsOn);
+      Serial.printf("Bot Res State = %i\n", botResIsOn);
+
+  }
+}
+
+void TurnTopRes(bool estado){
+  if (commIsOk)
+  {
+    WriteCoilToSlave(arduSlaveAddr, topResReg, estado);
+  }
+}
+
+void TopResBtnAct(){
+  topResBtnClicked = get_var_top_res_btn_clicked();
+  bool estado = topResIsOn;
+
+  if (topResBtnClicked){
+      TurnTopRes(!estado);
+      topResIsOn = !estado;
+      set_var_top_res_btn_clicked(false);
+      TelnetStream.printf("Top Res State = %i\n", topResIsOn);
+      Serial.printf("Top Res State = %i\n", topResIsOn);
+
+  }
+} 
+
+void ReadTempActual(){
+      char t[3];
+
+        tempActual = readInputReg(arduSlaveAddr, tempActualReg);
+
+  Serial.println(readInputReg(arduSlaveAddr, tempActualReg));
+
+  Serial.printf("Temperature = %i \n", tempActual);
+
+
+if (commIsOk){
+
+  sprintf(t, "%i", tempActual);
+  lv_label_set_text(objects.temp_actual_lbl, t);
+
+  
+} else {
+      lv_label_set_text(objects.temp_actual_lbl, "NA");
+}
+
+}
+
+void  checkIfHasToShutdown() {
+if (hasToTurnOffAll){
+TurnBotRes(Off);
+TurnTopRes(Off);
+TurnDoorMotor(Off);
+TurnFan(Off);
+set_var_bot_res_state(Off);
+set_var_top_res_state(Off);
+set_var_fan_state(Off);
+set_var_door_motor_state(Off);
+processProgram = false;
+}
+}
+
+
+void checkCommIn()
+{
+  randValReceived = readInputReg(arduSlaveAddr, commCheckOutReg);
+  Serial.print("commRegIn Input value = ");
+  Serial.println(randValReceived);
+  if (randValReceived != prevRandValReceived){
+    commIsOK = true;  
+    } else {
+    commIsOK = false;
+    checkIfHasToShutdown();
+    processProgram = false;
+    Serial.println("Comm fault");
+  }
+  prevRandValReceived = randValReceived;
+    }
+
+void HeatGen(int mode){  //Will generate heat based on selected mode
+  if (mode == 0) {
+    //Both resistances Off
+    TurnTopRes(Off);
+    TurnBotRes(Off);
+  }
+  if (mode == 1){
+    //Turn only Bottom Resistance
+    TurnTopRes(Off);
+    TurnBotRes(On);
+
+  }
+  if (mode == 2){
+    //turn only top resistance
+    TurnTopRes(On);
+    TurnBotRes(Off);    
+  }
+  if (mode == 3){
+    //Turn both top and botton resistances
+    TurnTopRes(On);
+    TurnBotRes(On);
+  }
+
+
+}
+
+void HeatSelectMode(){
+
+//Read heating Mode.  Use 1 or 2 for test purposes
+  heatModeClicked = get_var_heating_mode();
+
+  if ((heatModeClicked == 1) && (processProgram) ) {
+
+    //change button style
+    lv_obj_set_style_bg_color(objects.bake_btn, lv_color_hex(0xfff33121), LV_PART_MAIN | LV_STATE_DEFAULT);
+  } else {
+    lv_obj_set_style_bg_color(objects.bake_btn, lv_color_hex(0xff21f395), LV_PART_MAIN | LV_STATE_DEFAULT);
+
+  }
+  if ((heatModeClicked == 2) && (processProgram)) {
+    lv_obj_set_style_bg_color(objects.broil_btn, lv_color_hex(0xfff33121), LV_PART_MAIN | LV_STATE_DEFAULT);
+
+  } else {
+    lv_obj_set_style_bg_color(objects.broil_btn, lv_color_hex(0xff21f395), LV_PART_MAIN | LV_STATE_DEFAULT);
+
+  }
+
+  bool turnOnHeat = false;
+  int heatMode = 0;
+
+  bool continueHeating = false;
+  int highTempLimit = 0;
+
+  if((processProgram == true)) {
+    continueHeating = true;
+  } else {
+    continueHeating = false;
+    tempSetReachedOnce = false;
+  }
+
+  if ((continueHeating) && (tempActual >= tempSetPoint) && (tempSetReachedOnce == false)){
+    tempSetReachedOnce = true;
+    highTempLimit = highToOff;
+    turnOnHeat = false;
+    Serial.println("Setpoint temperature reached once");
+    TelnetStream.println("Setpoint temperature reached once");
+  } else {
+    highTempLimit = tempSetPoint;
+    tempSetReachedOnce = false;
+    turnOnHeat = true;
+
+  }
+
+  if ((continueHeating) && (tempActual <= highTempLimit)){
+    turnOnHeat = true;
+  }
+
+  if (tempActual >= highTempLimit) {
+    turnOnHeat = false;
+    Serial.println("Heat off after reaching High Limit");
+    TelnetStream.println("Heat off after reaching High Limit");
+  }
+
+  if((continueHeating) && (tempSetReachedOnce) && (tempActual > lowToOn) && (tempActual < highTempLimit) ) {
+    turnOnHeat = false;
+    Serial.println("Heat Off between high and low range");
+    TelnetStream.println("Heat Off between high and low range");
+
+  }
+
+  if ((continueHeating) && (tempActual <= lowToOn)){
+    turnOnHeat = true;
+  }
+
+  if (!turnOnHeat){
+    heatMode = 0;
+  }
+
+
+  if ((turnOnHeat) && (tempActual <= 200)){
+    heatMode = 3;
+  } else {
+    heatMode = heatModeClicked;
+
+  }
+  //process heat mode
+  HeatGen(heatMode);
+  Serial.printf("Heat Mode selected is: %i \n", heatMode);
+  TelnetStream.printf("Heat Mode selected is: %i \n", heatMode);
+  
+} 
+
+
+
 
 ///////////////
 
@@ -847,17 +1236,27 @@ void setup()
   }
 
   // Define relay type
-  LowToOnHighToOff  = readDiscreteReg(1, lowOrHighReg);
+  LowToOnHighToOff = readDiscreteReg(1, lowOrHighReg);
   Serial.printf("LowToOnHighToOff = %i\n", LowToOnHighToOff);
   TelnetStream.printf("LowToOnHighToOff = %i\n", LowToOnHighToOff);
 
-  if (LowToOnHighToOff == 1){
-     On  = 0;
-     Off = 1;
-  } else {
-     On  =  1;
-     Off  = 0;
+  if (LowToOnHighToOff == 1)
+  {
+    On = 0;
+    Off = 1;
   }
+  else
+  {
+    On = 1;
+    Off = 0;
+  }
+
+  set_var_light_state(Off);
+  set_var_fan_state(Off);
+  set_var_door_motor_state(Off);
+  set_var_bot_res_state(Off); 
+  set_var_top_res_state(Off);
+  set_var_heating_mode(1);
 
 
 
@@ -881,6 +1280,14 @@ void loop()
 
     CheckStartClicked();
     StartBtnStyle();
+        
+    LightButtomAct();
+    FanBtnAct();
+    DoorMotorBtnAct();
+    BotResBtnAct();
+    TopResBtnAct();
+
+
 
     prevEvery100Millis = actualMillis;
   }
@@ -890,27 +1297,36 @@ void loop()
   {
     FillDateTimeLbls();
 
+
     prevEvery500Millis = actualMillis;
   }
+
+//Run every second
+  if(actualMillis - prevEveryOneSec >= everyOneSec){
+
+    CommCheck();
+    ReadTempActual();
+    prevEveryOneSec = actualMillis;
+  }
+
 
   // Run every 5 seconds
   if (actualMillis - prevEveryFiveSec >= everyFiveSec)
   {
 
-    CommCheck();
 
-/*
-    for (uint8_t i = 4; 13; i++)
-    {
-      WriteCoilToSlave(1, i, 0);
-      readDiscreteReg(1, i);
-      delay(50);
-      WriteCoilToSlave(1, i, 1);
-      readDiscreteReg(1, i);
-      delay(50);
-      readHoldingReg(1, 1);
-    }
-  */
+    /*
+        for (uint8_t i = 4; 13; i++)
+        {
+          WriteCoilToSlave(1, i, 0);
+          readDiscreteReg(1, i);
+          delay(50);
+          WriteCoilToSlave(1, i, 1);
+          readDiscreteReg(1, i);
+          delay(50);
+          readHoldingReg(1, 1);
+        }
+      */
 
     // TelnetStream.println("Inside Loop");
     /*

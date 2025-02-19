@@ -60,3 +60,126 @@ int32_t get_var_min_temp_set_point(){
  void set_var_start_clicked(bool value){
   started = value;
  };
+
+bool light_btn_clicked;
+
+bool get_var_light_btn_clicked() {
+    return light_btn_clicked;
+}
+
+void set_var_light_btn_clicked(bool value) {
+    light_btn_clicked = value;
+}
+
+#include "vars.h"
+
+bool light_state;
+
+bool get_var_light_state() {
+    return light_state;
+}
+
+void set_var_light_state(bool value) {
+    light_state = value;
+}
+
+bool fan_btn_clicked;
+
+bool get_var_fan_btn_clicked() {
+    return fan_btn_clicked;
+}
+
+void set_var_fan_btn_clicked(bool value) {
+    fan_btn_clicked = value;
+}
+
+
+bool fan_state;
+
+bool get_var_fan_state() {
+    return fan_state;
+}
+
+void set_var_fan_state(bool value) {
+    fan_state = value;
+}
+
+bool door_motor_btn_clicked;
+
+bool get_var_door_motor_btn_clicked() {
+    return door_motor_btn_clicked;
+}
+
+void set_var_door_motor_btn_clicked(bool value) {
+    door_motor_btn_clicked = value;
+}
+
+bool door_motor_state;
+
+bool get_var_door_motor_state() {
+    return door_motor_state;
+}
+
+void set_var_door_motor_state(bool value) {
+    door_motor_state = value;
+}
+
+bool bot_res_btn_clicked;
+
+bool get_var_bot_res_btn_clicked() {
+    return bot_res_btn_clicked;
+}
+
+void set_var_bot_res_btn_clicked(bool value) {
+    bot_res_btn_clicked = value;
+}
+bool bot_res_state;
+
+bool get_var_bot_res_state() {
+    return bot_res_state;
+}
+
+void set_var_bot_res_state(bool value) {
+    bot_res_state = value;
+}
+bool top_res_btn_clicked;
+
+bool get_var_top_res_btn_clicked() {
+    return top_res_btn_clicked;
+}
+
+void set_var_top_res_btn_clicked(bool value) {
+    top_res_btn_clicked = value;
+}
+
+
+bool top_res_state;
+
+bool get_var_top_res_state() {
+    return top_res_state;
+}
+
+void set_var_top_res_state(bool value) {
+    top_res_state = value;
+}
+
+bool bake_btn_clicked;
+
+bool get_var_bake_btn_clicked() {
+    return bake_btn_clicked;
+}
+
+void set_var_bake_btn_clicked(bool value) {
+    bake_btn_clicked = value;
+}
+
+
+int32_t heating_mode;
+
+int32_t get_var_heating_mode() {
+    return heating_mode;
+}
+
+void set_var_heating_mode(int32_t value) {
+    heating_mode = value;
+}
