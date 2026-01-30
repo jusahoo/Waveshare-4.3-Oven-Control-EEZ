@@ -192,7 +192,7 @@ bool hasToTurnOffAll = false;
 #define USB_SEL 5
 
 // I2C Pin define
-#define I2C_MASTER_NUM 0
+// Removed I2C_MASTER_NUM macro, use (i2c_port_t)0 directly
 #define I2C_MASTER_SDA_IO 8
 #define I2C_MASTER_SCL_IO 9
 
@@ -208,7 +208,7 @@ bool hasToTurnOffAll = false;
 const int LedPin = 13;  // Change that to match your led
 const int TxenPin = -1; // -1 disables the feature, change that if you are using an RS485 driver, this pin would be connected to the DE and /RE pins of the driver.
 
-ESP_IOExpander *expander = new ESP_IOExpander_CH422G(I2C_MASTER_NUM, ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000);
+ESP_IOExpander *expander = new ESP_IOExpander_CH422G((i2c_port_t)0, ESP_IO_EXPANDER_I2C_CH422G_ADDRESS_000);
 
 /**
 /* To use the built-in examples and demos of LVGL uncomment the includes below respectively.
