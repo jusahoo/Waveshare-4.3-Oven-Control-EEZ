@@ -538,7 +538,7 @@ void displayMessageBox(){
 }
 */
 
-void CreateMsgBox(char titulo[10], char mensaje[50])
+void CreateMsgBox(const char* titulo, const char* mensaje)
 {
   lv_obj_t *mbox01 = lv_msgbox_create(NULL, titulo, mensaje, 0, true);
   // mbox01 = lv_msgbox_create(NULL, titulo, mensaje, 0, true);
@@ -547,7 +547,7 @@ void CreateMsgBox(char titulo[10], char mensaje[50])
   lv_obj_set_size(mbox01, LV_PCT(70), LV_PCT(70));
   lv_obj_set_style_align(mbox01, LV_ALIGN_DEFAULT, LV_PART_MAIN | LV_STATE_DEFAULT);
   lv_obj_set_style_text_font(mbox01, &lv_font_montserrat_32, LV_PART_MAIN | LV_STATE_DEFAULT);
-};
+}
 
 void StartBtnStyle()
 {
@@ -695,11 +695,11 @@ bool readDiscreteReg(uint8_t slaveAddr, uint16_t registro)
   Serial.print("Discrete Read = ");
   Serial.println(node.getResponseBuffer(0));
 
-  if (result = 1)
+  if (result == 1)
   {
     res = true;
   }
-  else if (result = 0)
+  else if (result == 0)
   {
     res = false;
   }
