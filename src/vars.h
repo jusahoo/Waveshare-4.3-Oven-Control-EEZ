@@ -10,6 +10,8 @@ extern "C" {
 
 // enum declarations
 
+
+
 // Flow global variables
 
 enum FlowGlobalVariables {
@@ -74,6 +76,7 @@ extern bool get_var_top_res_state();
 extern void set_var_top_res_state(bool value);
 extern int32_t get_var_heating_mode();
 extern void set_var_heating_mode(int32_t value);
+
 
 #ifdef __cplusplus
 }
