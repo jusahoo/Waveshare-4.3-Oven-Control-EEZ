@@ -23,7 +23,6 @@ extern void action_top_res_control_act(lv_event_t * e);
 extern void action_bake_ctl_act(lv_event_t * e);
 extern void action_broil_ctl_act(lv_event_t * e);
 
-
 #ifdef __cplusplus
 }
 #endif

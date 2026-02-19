@@ -1304,7 +1304,7 @@ void loop()
 //Run every second
   if(actualMillis - prevEveryOneSec >= everyOneSec){
 
-    CommCheck();
+
     ReadTempActual();
     prevEveryOneSec = actualMillis;
   }
@@ -1313,7 +1313,7 @@ void loop()
   // Run every 5 seconds
   if (actualMillis - prevEveryFiveSec >= everyFiveSec)
   {
-
+    CommCheck();
 
     /*
         for (uint8_t i = 4; 13; i++)

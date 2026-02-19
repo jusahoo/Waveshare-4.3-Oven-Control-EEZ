@@ -2,6 +2,7 @@
 #include "images.h"
 #include "fonts.h"
 
+#include "ui.h"
 #include "screens.h"
 
 //
@@ -9,9 +10,11 @@
 //
 
 void add_style_status_lbl(lv_obj_t *obj) {
+    (void)obj;
 };
 
 void remove_style_status_lbl(lv_obj_t *obj) {
+    (void)obj;
 };
 
 //
@@ -25,7 +28,7 @@ void init_style_light_blue_MAIN_DEFAULT(lv_style_t *style) {
 lv_style_t *get_style_light_blue_MAIN_DEFAULT() {
     static lv_style_t *style;
     if (!style) {
-        style = lv_mem_alloc(sizeof(lv_style_t));
+        style = (lv_style_t *)lv_mem_alloc(sizeof(lv_style_t));
         lv_style_init(style);
         init_style_light_blue_MAIN_DEFAULT(style);
     }
@@ -33,13 +36,13 @@ lv_style_t *get_style_light_blue_MAIN_DEFAULT() {
 };
 
 void init_style_light_blue_MAIN_CHECKED(lv_style_t *style) {
-    lv_style_set_bg_color(style, lv_color_hex(0xff21f35d));
+    lv_style_set_bg_color(style, lv_color_hex(0xff21f34a));
 };
 
 lv_style_t *get_style_light_blue_MAIN_CHECKED() {
     static lv_style_t *style;
     if (!style) {
-        style = lv_mem_alloc(sizeof(lv_style_t));
+        style = (lv_style_t *)lv_mem_alloc(sizeof(lv_style_t));
         lv_style_init(style);
         init_style_light_blue_MAIN_CHECKED(style);
     }
@@ -47,11 +50,13 @@ lv_style_t *get_style_light_blue_MAIN_CHECKED() {
 };
 
 void add_style_light_blue(lv_obj_t *obj) {
+    (void)obj;
     lv_obj_add_style(obj, get_style_light_blue_MAIN_DEFAULT(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_style(obj, get_style_light_blue_MAIN_CHECKED(), LV_PART_MAIN | LV_STATE_CHECKED);
 };
 
 void remove_style_light_blue(lv_obj_t *obj) {
+    (void)obj;
     lv_obj_remove_style(obj, get_style_light_blue_MAIN_DEFAULT(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_remove_style(obj, get_style_light_blue_MAIN_CHECKED(), LV_PART_MAIN | LV_STATE_CHECKED);
 };
@@ -68,7 +73,7 @@ void init_style_clicked_MAIN_DEFAULT(lv_style_t *style) {
 lv_style_t *get_style_clicked_MAIN_DEFAULT() {
     static lv_style_t *style;
     if (!style) {
-        style = lv_mem_alloc(sizeof(lv_style_t));
+        style = (lv_style_t *)lv_mem_alloc(sizeof(lv_style_t));
         lv_style_init(style);
         init_style_clicked_MAIN_DEFAULT(style);
     }
@@ -76,10 +81,12 @@ lv_style_t *get_style_clicked_MAIN_DEFAULT() {
 };
 
 void add_style_clicked(lv_obj_t *obj) {
+    (void)obj;
     lv_obj_add_style(obj, get_style_clicked_MAIN_DEFAULT(), LV_PART_MAIN | LV_STATE_DEFAULT);
 };
 
 void remove_style_clicked(lv_obj_t *obj) {
+    (void)obj;
     lv_obj_remove_style(obj, get_style_clicked_MAIN_DEFAULT(), LV_PART_MAIN | LV_STATE_DEFAULT);
 };
 
@@ -106,4 +113,3 @@ void remove_style(lv_obj_t *obj, int32_t styleIndex) {
     };
     remove_style_funcs[styleIndex](obj);
 }
-

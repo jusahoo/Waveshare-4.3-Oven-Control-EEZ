@@ -22,8 +22,6 @@ lv_style_t *get_style_clicked_MAIN_DEFAULT();
 void add_style_clicked(lv_obj_t *obj);
 void remove_style_clicked(lv_obj_t *obj);
 
-
-
 #ifdef __cplusplus
 }
 #endif
