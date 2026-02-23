@@ -702,7 +702,7 @@ void displayMessageBox(){
 }
 */
 
-void CreateMsgBox(const char *titulo, const char *mensaje)
+void CreateMsgBox(const char* titulo, const char* mensaje)
 {
   lv_obj_t *mbox01 = lv_msgbox_create(NULL, titulo, mensaje, 0, true);
   // mbox01 = lv_msgbox_create(NULL, titulo, mensaje, 0, true);
@@ -809,19 +809,177 @@ void WriteCoilToSlave(uint8_t slaveAddr = 0x01, uint16_t regAddress = 13, int va
 
 void WriteHoldToSlave(uint8_t slaveAddr = 0x01, uint16_t regAddress = 20, int value = 0)
 {
-  // enqueue a write-holding-register action
-  ModbusAction action;
-  action.type = WRITE_HOLD;
-  action.slaveAddr = slaveAddr;
-  action.regAddress = regAddress;
-  action.value = value;
-  action.callback = modbusWriteCallback;
-  enqueueModbusAction(&action);
+
+  uint8_t result;
+  // int result;
+  // uint16_t registerAddress = 0x0002    //Register equivalent to Arduino pin number
+  node.begin(arduSlaveAddr, RS485);
+  result = node.writeSingleRegister(regAddress, value);
+  Serial.println(result);
+  if (result == node.ku8MBSuccess)
+  {
+    Serial.println(result);
+    Serial.print("Holding Register written OK: ");
+    Serial.println(regAddress);
+    TelnetStream.println("Holding Reg written OK");
+  }
+  else
+  {
+    Serial.println(result);
+    Serial.print("Holding Reg  Write ERROR:  ");
+    Serial.println(regAddress);
+    TelnetStream.println("Holding Reg  Write ERROR");
+  }
 }
 
 
-// Synchronous Modbus helpers removed — use async helpers (`readDiscreteRegAsync`,
-// `readHoldingRegAsync`, `readInputRegAsync`) and `WriteCoilToSlave`/`WriteHoldToSlave`.
+bool readDiscreteReg(uint8_t slaveAddr, uint16_t registro)
+{
+
+  node.begin(slaveAddr, RS485);
+  bool res = false;
+
+  uint8_t result = node.readDiscreteInputs(registro, 1);
+
+  TelnetStream.print("Discrete Read = ");
+  TelnetStream.println(node.getResponseBuffer(0));
+  Serial.print("Discrete Read = ");
+  Serial.println(node.getResponseBuffer(0));
+
+  if (result == 1)
+  {
+    res = true;
+  }
+  else if (result == 0)
+  {
+    res = false;
+  }
+  else
+  {
+    Serial.println("Discrete Read error, program stoped");
+    TelnetStream.println("Discrete Read error, program stoped");
+
+    processProgram = false;
+  }
+
+  return res;
+
+  // uint16_t registerAddress = 0x0002    //Register equivalent to Arduino pin number
+}
+
+int readHoldingReg(uint8_t slaveAddr, uint16_t registro)
+{
+
+  int res = 0;
+  node.begin(slaveAddr, RS485);
+
+  uint8_t result; // Variable to store the result of Modbus operations
+
+  // Read 2 holding registers starting at address 0x0000
+  // This function sends a Modbus request to the slave to read the registers
+  result = node.readHoldingRegisters(registro, 1);
+
+  // If the read is successful, process the data
+  if (result == node.ku8MBSuccess)
+  {
+    // Get the response data from the response buffer
+
+    TelnetStream.print("Holding Read Reg : ");
+    TelnetStream.print(registro);
+    TelnetStream.print("  data = ");
+    TelnetStream.println(node.getResponseBuffer(0));
+
+    Serial.print("Holding Read Reg : ");
+    Serial.print(registro);
+    Serial.print("  data = ");
+    Serial.println(node.getResponseBuffer(0));
+
+    res = node.getResponseBuffer(0);
+  }
+  else
+  {
+    // Print an error message if the read fails
+    Serial.print("Modbus read failed Reg: ");
+    Serial.print(registro);
+    Serial.print(" result code: ");
+    Serial.println(result, HEX); // Print the error code in hexadecimal format
+    res = 0;
+  }
+
+  return res;
+}
+
+
+int readInputReg(uint8_t slaveAddr, uint16_t registro)
+{
+
+  int res = 0;
+  node.begin(slaveAddr, RS485);
+
+  uint8_t result; // Variable to store the result of Modbus operations
+
+  // Read 2 holding registers starting at address 0x0000
+  // This function sends a Modbus request to the slave to read the registers
+  result = node.readInputRegisters(registro, 1);
+
+  // If the read is successful, process the data
+  if (result == node.ku8MBSuccess)
+  {
+    // Get the response data from the response buffer
+
+    TelnetStream.print("Input Read Reg : ");
+    TelnetStream.print(registro);
+    TelnetStream.print("  data = ");
+    TelnetStream.println(node.getResponseBuffer(0));
+
+    Serial.print("Input Read Reg : ");
+    Serial.print(registro);
+    Serial.print("  data = ");
+    Serial.println(node.getResponseBuffer(0));
+
+    res = node.getResponseBuffer(0);
+  }
+  else
+  {
+    // Print an error message if the read fails
+    Serial.print("Modbus read failed Reg: ");
+    Serial.print(registro);
+    Serial.print(" result code: ");
+    Serial.println(result, HEX); // Print the error code in hexadecimal format
+    res = 0;
+  }
+
+  return res;
+}
+
+
+
+void CommCheck()
+{
+
+  int randomCode = random(1, 62000);
+  WriteHoldToSlave(arduSlaveAddr,randomCodeReg, randomCode);
+
+
+
+
+
+  int i = 0;
+  i = readDiscreteReg(1, commCheckInReg);
+
+  Serial.printf("CommCheck i  = %i\n", i);
+
+  if (i == 1)
+  {
+    commIsOk = true;
+    Serial.println("Comm is Ok");
+  }
+  else
+  {
+    commIsOk = false;
+    Serial.println("Comm Lost");
+  }
+}
 
 void TurnLight(bool estado)
 {
