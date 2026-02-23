@@ -1,5 +1,14 @@
 #include <Arduino.h>
 
+// LVGL and panel includes
+#include <lvgl.h>
+#include <ESP_Panel_Conf.h>
+#include <ESP_Panel.h>
+#include <ESP_IOExpander_Library.h>
+
+// Project UI declarations
+#include "ui.h"
+
 /**
  * The example demonstrates how to port LVGL.
  *
@@ -17,33 +26,9 @@
  * ```bash
  * ...
  * Hello LVGL! V8.3.8
- * I am ESP32_Display_Panel
- * Starting LVGL task
- * Setup done
- * Loop
- * Loop
- * Loop
- * Loop
- * ...
- * ```
  */
+// synchronous CommCheck removed; async version used elsewhere
 
-/*
-
-
-  If you want to use slaveid function to change the slaveid on the fly, you need to modify the ModbusMaster library (Or get the copy from my website)
-  In ModbusMaster.h add at line 78
-    void slaveid(uint8_t);
-  In ModbusMaster.cpp add at line 75
-    void ModbusMaster::slaveid(uint8_t slave)
-     {
-      _u8MBSlave = slave;
-     }
-*/
-#include <lvgl.h>
-#include <ESP_Panel_Library.h>
-#include <ESP_IOExpander_Library.h>
-#include <ui.h>
 #include <vars.h>
 #include <actions.h>
 ////////////////////////
@@ -70,9 +55,34 @@ WebServer server(80);
 #endif
 
 #include <ModbusMaster.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 // instantiate ModbusMaster object
 ModbusMaster node;
+
+// --- Modbus action queue infrastructure ---
+typedef enum { WRITE_COIL, WRITE_HOLD, READ_DISCRETE, READ_HOLDING, READ_INPUT } ModbusActionType;
+
+typedef void (*ModbusCallback)(int result);
+
+typedef struct {
+  ModbusActionType type;
+  uint8_t slaveAddr;
+  uint16_t regAddress;
+  int value; // used for write operations
+  ModbusCallback callback; // optional callback for result
+} ModbusAction;
+
+static QueueHandle_t modbusQueue = NULL;
+
+void ModbusTask(void *param);
+void enqueueModbusAction(const ModbusAction *action);
+
+// forward declarations
+void checkIfHasToShutdown();
+
+// --- end Modbus infra ---
 
 uint8_t arduSlaveAddr = 0x01;   // Arduino slave address
 uint8_t moduleSlaveAddr = 0x02; // Slave address for the Waveshare slave module
@@ -85,6 +95,9 @@ uint16_t lowOrHighReg = 11; // Modbus discrete register to check if relay is Low
 
 // meassure resistance from probe tembperature
 int probeRes = 0;
+
+      static uint32_t last = 0;
+
 
 const uint16_t doorClosedReg = 9; // equivalent 10 10014 discrete address for master in base 1
 bool doorClosed = false;
@@ -309,6 +322,157 @@ void lvgl_port_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(task_delay_ms));
   }
 }
+
+// Modbus task: processes ModbusAction items from queue
+void ModbusTask(void *param) {
+  ModbusAction action;
+  for (;;) {
+    if (xQueueReceive(modbusQueue, &action, portMAX_DELAY) == pdTRUE) {
+      int result = 0;
+      switch (action.type) {
+        case WRITE_COIL:
+          node.begin(action.slaveAddr, RS485);
+          result = node.writeSingleCoil(action.regAddress, action.value);
+          if (action.callback) action.callback(result);
+          break;
+        case WRITE_HOLD:
+          node.begin(action.slaveAddr, RS485);
+          result = node.writeSingleRegister(action.regAddress, action.value);
+          if (action.callback) action.callback(result);
+          break;
+        case READ_DISCRETE:
+          node.begin(action.slaveAddr, RS485);
+          result = node.readDiscreteInputs(action.regAddress, 1);
+          if (action.callback) action.callback(node.getResponseBuffer(0));
+          break;
+        case READ_HOLDING:
+          node.begin(action.slaveAddr, RS485);
+          result = node.readHoldingRegisters(action.regAddress, 1);
+          if (action.callback) action.callback(node.getResponseBuffer(0));
+          break;
+        case READ_INPUT:
+          node.begin(action.slaveAddr, RS485);
+          result = node.readInputRegisters(action.regAddress, 1);
+          if (action.callback) action.callback(node.getResponseBuffer(0));
+          break;
+      }
+      // small delay to yield
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+  }
+}
+
+void enqueueModbusAction(const ModbusAction *action) {
+  if (modbusQueue) {
+    // copy action onto queue
+    xQueueSend(modbusQueue, action, 0);
+  }
+}
+
+// Generic callbacks for write results
+static void modbusWriteCallback(int result) {
+  Serial.println(result);
+  if (result == node.ku8MBSuccess) {
+    Serial.println("Write OK");
+    TelnetStream.println("Write OK");
+  } else {
+    Serial.println("Write ERROR");
+    TelnetStream.println("Write ERROR");
+  }
+}
+
+// callback used by CommCheck to handle the async discrete read result
+static void commCheckReadCallback(int i) {
+  Serial.printf("CommCheck i  = %i\n", i);
+  if (i == 1) {
+    commIsOk = true;
+    Serial.println("Comm is Ok");
+  } else {
+    commIsOk = false;
+    Serial.println("Comm Lost");
+  }
+}
+
+// callback for initial relay type detection
+static void lowOrHighCallback(int val) {
+  LowToOnHighToOff = val;
+  Serial.printf("LowToOnHighToOff = %i\n", LowToOnHighToOff);
+  TelnetStream.printf("LowToOnHighToOff = %i\n", LowToOnHighToOff);
+  if (LowToOnHighToOff == 1) {
+    On = 0;
+    Off = 1;
+  } else {
+    On = 1;
+    Off = 0;
+  }
+  set_var_light_state(Off);
+  set_var_fan_state(Off);
+  set_var_door_motor_state(Off);
+  set_var_bot_res_state(Off);
+  set_var_top_res_state(Off);
+  set_var_heating_mode(1);
+}
+
+// callback for temperature read
+static void readTempCallback(int value) {
+  char t[8];
+  tempActual = value;
+  Serial.printf("Temperature = %i \n", tempActual);
+  if (commIsOk) {
+    sprintf(t, "%i", tempActual);
+    lv_label_set_text(objects.temp_actual_lbl, t);
+  } else {
+    lv_label_set_text(objects.temp_actual_lbl, "NA");
+  }
+}
+
+// callback for checkCommIn async read
+static void checkCommInCallback(int value) {
+  randValReceived = value;
+  Serial.print("commRegIn Input value = ");
+  Serial.println(randValReceived);
+  if (randValReceived != prevRandValReceived) {
+    commIsOK = true;
+  } else {
+    commIsOK = false;
+    checkIfHasToShutdown();
+    processProgram = false;
+    Serial.println("Comm fault");
+  }
+  prevRandValReceived = randValReceived;
+}
+
+// Async read helpers: enqueue read actions with a callback
+void readDiscreteRegAsync(uint8_t slaveAddr, uint16_t registro, ModbusCallback cb) {
+  ModbusAction action;
+  action.type = READ_DISCRETE;
+  action.slaveAddr = slaveAddr;
+  action.regAddress = registro;
+  action.value = 0;
+  action.callback = cb;
+  enqueueModbusAction(&action);
+}
+
+void readHoldingRegAsync(uint8_t slaveAddr, uint16_t registro, ModbusCallback cb) {
+  ModbusAction action;
+  action.type = READ_HOLDING;
+  action.slaveAddr = slaveAddr;
+  action.regAddress = registro;
+  action.value = 0;
+  action.callback = cb;
+  enqueueModbusAction(&action);
+}
+
+void readInputRegAsync(uint8_t slaveAddr, uint16_t registro, ModbusCallback cb) {
+  ModbusAction action;
+  action.type = READ_INPUT;
+  action.slaveAddr = slaveAddr;
+  action.regAddress = registro;
+  action.value = 0;
+  action.callback = cb;
+  enqueueModbusAction(&action);
+}
+
 
 ////////////////////////////////
 
@@ -538,7 +702,7 @@ void displayMessageBox(){
 }
 */
 
-void CreateMsgBox(char titulo[10], char mensaje[50])
+void CreateMsgBox(const char *titulo, const char *mensaje)
 {
   lv_obj_t *mbox01 = lv_msgbox_create(NULL, titulo, mensaje, 0, true);
   // mbox01 = lv_msgbox_create(NULL, titulo, mensaje, 0, true);
@@ -633,202 +797,31 @@ void cntlRemPin(u_int8_t remoteID, uint16_t pinNum, bool state)
 
 void WriteCoilToSlave(uint8_t slaveAddr = 0x01, uint16_t regAddress = 13, int value = 1)
 {
-
-  uint8_t result;
-  // int result;
-  // uint16_t registerAddress = 0x0002    //Register equivalent to Arduino pin number
-  node.begin(arduSlaveAddr, RS485);
-  result = node.writeSingleCoil(regAddress, value);
-  Serial.println(result);
-  if (result == node.ku8MBSuccess)
-  {
-    Serial.println(result);
-    Serial.print("Coil written OK: ");
-    Serial.println(regAddress);
-    TelnetStream.println("Coil written OK");
-  }
-  else
-  {
-    Serial.println(result);
-    Serial.print("Coil Write ERROR:  ");
-    Serial.println(regAddress);
-    TelnetStream.println("Coil Write ERROR");
-  }
+  // enqueue a write-coil action to be processed by ModbusTask
+  ModbusAction action;
+  action.type = WRITE_COIL;
+  action.slaveAddr = slaveAddr;
+  action.regAddress = regAddress;
+  action.value = value;
+  action.callback = modbusWriteCallback;
+  enqueueModbusAction(&action);
 }
 
 void WriteHoldToSlave(uint8_t slaveAddr = 0x01, uint16_t regAddress = 20, int value = 0)
 {
-
-  uint8_t result;
-  // int result;
-  // uint16_t registerAddress = 0x0002    //Register equivalent to Arduino pin number
-  node.begin(arduSlaveAddr, RS485);
-  result = node.writeSingleRegister(regAddress, value);
-  Serial.println(result);
-  if (result == node.ku8MBSuccess)
-  {
-    Serial.println(result);
-    Serial.print("Holding Register written OK: ");
-    Serial.println(regAddress);
-    TelnetStream.println("Holding Reg written OK");
-  }
-  else
-  {
-    Serial.println(result);
-    Serial.print("Holding Reg  Write ERROR:  ");
-    Serial.println(regAddress);
-    TelnetStream.println("Holding Reg  Write ERROR");
-  }
+  // enqueue a write-holding-register action
+  ModbusAction action;
+  action.type = WRITE_HOLD;
+  action.slaveAddr = slaveAddr;
+  action.regAddress = regAddress;
+  action.value = value;
+  action.callback = modbusWriteCallback;
+  enqueueModbusAction(&action);
 }
 
 
-bool readDiscreteReg(uint8_t slaveAddr, uint16_t registro)
-{
-
-  node.begin(slaveAddr, RS485);
-  bool res = false;
-
-  uint8_t result = node.readDiscreteInputs(registro, 1);
-
-  TelnetStream.print("Discrete Read = ");
-  TelnetStream.println(node.getResponseBuffer(0));
-  Serial.print("Discrete Read = ");
-  Serial.println(node.getResponseBuffer(0));
-
-  if (result = 1)
-  {
-    res = true;
-  }
-  else if (result = 0)
-  {
-    res = false;
-  }
-  else
-  {
-    Serial.println("Discrete Read error, program stoped");
-    TelnetStream.println("Discrete Read error, program stoped");
-
-    processProgram = false;
-  }
-
-  return res;
-
-  // uint16_t registerAddress = 0x0002    //Register equivalent to Arduino pin number
-}
-
-int readHoldingReg(uint8_t slaveAddr, uint16_t registro)
-{
-
-  int res = 0;
-  node.begin(slaveAddr, RS485);
-
-  uint8_t result; // Variable to store the result of Modbus operations
-
-  // Read 2 holding registers starting at address 0x0000
-  // This function sends a Modbus request to the slave to read the registers
-  result = node.readHoldingRegisters(registro, 1);
-
-  // If the read is successful, process the data
-  if (result == node.ku8MBSuccess)
-  {
-    // Get the response data from the response buffer
-
-    TelnetStream.print("Holding Read Reg : ");
-    TelnetStream.print(registro);
-    TelnetStream.print("  data = ");
-    TelnetStream.println(node.getResponseBuffer(0));
-
-    Serial.print("Holding Read Reg : ");
-    Serial.print(registro);
-    Serial.print("  data = ");
-    Serial.println(node.getResponseBuffer(0));
-
-    res = node.getResponseBuffer(0);
-  }
-  else
-  {
-    // Print an error message if the read fails
-    Serial.print("Modbus read failed Reg: ");
-    Serial.print(registro);
-    Serial.print(" result code: ");
-    Serial.println(result, HEX); // Print the error code in hexadecimal format
-    res = 0;
-  }
-
-  return res;
-}
-
-
-int readInputReg(uint8_t slaveAddr, uint16_t registro)
-{
-
-  int res = 0;
-  node.begin(slaveAddr, RS485);
-
-  uint8_t result; // Variable to store the result of Modbus operations
-
-  // Read 2 holding registers starting at address 0x0000
-  // This function sends a Modbus request to the slave to read the registers
-  result = node.readInputRegisters(registro, 1);
-
-  // If the read is successful, process the data
-  if (result == node.ku8MBSuccess)
-  {
-    // Get the response data from the response buffer
-
-    TelnetStream.print("Input Read Reg : ");
-    TelnetStream.print(registro);
-    TelnetStream.print("  data = ");
-    TelnetStream.println(node.getResponseBuffer(0));
-
-    Serial.print("Input Read Reg : ");
-    Serial.print(registro);
-    Serial.print("  data = ");
-    Serial.println(node.getResponseBuffer(0));
-
-    res = node.getResponseBuffer(0);
-  }
-  else
-  {
-    // Print an error message if the read fails
-    Serial.print("Modbus read failed Reg: ");
-    Serial.print(registro);
-    Serial.print(" result code: ");
-    Serial.println(result, HEX); // Print the error code in hexadecimal format
-    res = 0;
-  }
-
-  return res;
-}
-
-
-
-void CommCheck()
-{
-
-  int randomCode = random(1, 62000);
-  WriteHoldToSlave(arduSlaveAddr,randomCodeReg, randomCode);
-
-
-
-
-
-  int i = 0;
-  i = readDiscreteReg(1, commCheckInReg);
-
-  Serial.printf("CommCheck i  = %i\n", i);
-
-  if (i == 1)
-  {
-    commIsOk = true;
-    Serial.println("Comm is Ok");
-  }
-  else
-  {
-    commIsOk = false;
-    Serial.println("Comm Lost");
-  }
-}
+// Synchronous Modbus helpers removed — use async helpers (`readDiscreteRegAsync`,
+// `readHoldingRegAsync`, `readInputRegAsync`) and `WriteCoilToSlave`/`WriteHoldToSlave`.
 
 void TurnLight(bool estado)
 {
@@ -953,24 +946,8 @@ void TopResBtnAct(){
 } 
 
 void ReadTempActual(){
-      char t[3];
-
-        tempActual = readInputReg(arduSlaveAddr, tempActualReg);
-
-  Serial.println(readInputReg(arduSlaveAddr, tempActualReg));
-
-  Serial.printf("Temperature = %i \n", tempActual);
-
-
-if (commIsOk){
-
-  sprintf(t, "%i", tempActual);
-  lv_label_set_text(objects.temp_actual_lbl, t);
-
-  
-} else {
-      lv_label_set_text(objects.temp_actual_lbl, "NA");
-}
+    // enqueue an async read for temperature; callback updates UI
+    readInputRegAsync(arduSlaveAddr, tempActualReg, readTempCallback);
 
 }
 
@@ -991,19 +968,9 @@ processProgram = false;
 
 void checkCommIn()
 {
-  randValReceived = readInputReg(arduSlaveAddr, commCheckOutReg);
-  Serial.print("commRegIn Input value = ");
-  Serial.println(randValReceived);
-  if (randValReceived != prevRandValReceived){
-    commIsOK = true;  
-    } else {
-    commIsOK = false;
-    checkIfHasToShutdown();
-    processProgram = false;
-    Serial.println("Comm fault");
-  }
-  prevRandValReceived = randValReceived;
-    }
+  // perform async read; callback will process the result
+  readInputRegAsync(arduSlaveAddr, commCheckOutReg, checkCommInCallback);
+}
 
 void HeatGen(int mode){  //Will generate heat based on selected mode
   if (mode == 0) {
@@ -1127,6 +1094,14 @@ void setup()
   Serial.begin(38400); /* prepare for possible serial debug */
   delay(1000);
 
+  // create Modbus action queue and start Modbus task
+  if (modbusQueue == NULL) {
+    modbusQueue = xQueueCreate(16, sizeof(ModbusAction));
+    if (modbusQueue) {
+      xTaskCreate(ModbusTask, "ModbusTask", 4096, NULL, 2, NULL);
+    }
+  }
+
   Serial2.begin(115200, SERIAL_8N1, 15, 16);
 
   String LVGL_Arduino = "Hello LVGL! ";
@@ -1235,132 +1210,66 @@ void setup()
     delay(10); // Wait for initialization to succeed
   }
 
-  // Define relay type
-  LowToOnHighToOff = readDiscreteReg(1, lowOrHighReg);
-  Serial.printf("LowToOnHighToOff = %i\n", LowToOnHighToOff);
-  TelnetStream.printf("LowToOnHighToOff = %i\n", LowToOnHighToOff);
-
-  if (LowToOnHighToOff == 1)
-  {
-    On = 0;
-    Off = 1;
-  }
-  else
-  {
-    On = 1;
-    Off = 0;
-  }
-
-  set_var_light_state(Off);
-  set_var_fan_state(Off);
-  set_var_door_motor_state(Off);
-  set_var_bot_res_state(Off); 
-  set_var_top_res_state(Off);
-  set_var_heating_mode(1);
+  // Define relay type (async read; callback will set On/Off and initial states)
+  readDiscreteRegAsync(1, lowOrHighReg, lowOrHighCallback);
 
 
 
 }
 
-void loop()
+void CommCheck()
 {
+  int randomCode = random(1, 62000);
+  // enqueue write then enqueue a read; queue preserves order so read runs after write
+  WriteHoldToSlave(arduSlaveAddr, randomCodeReg, randomCode);
+  // enqueue read with named callback
+  readDiscreteRegAsync(1, commCheckInReg, commCheckReadCallback);
+}
+
+void loop() {
+  uint32_t now = millis();
+  if (now - last >= 5) {
+    last = now;
+    lv_timer_handler();
+  }
+
   actualMillis = millis();
   server.handleClient();
   ElegantOTA.loop();
 
-  // run every 100 millia
-  if (actualMillis - prevEvery100Millis >= every100Millis)
-  {
-
+  // run every 100 ms
+  if (actualMillis - prevEvery100Millis >= every100Millis) {
     ReadTempSetPoint();
-
     ReadTimerSet();
-
     CheckTimerRem();
-
     CheckStartClicked();
     StartBtnStyle();
-        
     LightButtomAct();
     FanBtnAct();
     DoorMotorBtnAct();
     BotResBtnAct();
     TopResBtnAct();
-
-
-
     prevEvery100Millis = actualMillis;
   }
 
-  // Run every 500 Millis
-  if (actualMillis - prevEvery500Millis >= every500Millis)
-  {
+  // run every 500 ms
+  if (actualMillis - prevEvery500Millis >= every500Millis) {
     FillDateTimeLbls();
-
-
     prevEvery500Millis = actualMillis;
   }
 
-//Run every second
-  if(actualMillis - prevEveryOneSec >= everyOneSec){
-
+  // run every second
+  if (actualMillis - prevEveryOneSec >= everyOneSec) {
     CommCheck();
     ReadTempActual();
     prevEveryOneSec = actualMillis;
   }
 
-
-  // Run every 5 seconds
-  if (actualMillis - prevEveryFiveSec >= everyFiveSec)
-  {
-
-
-    /*
-        for (uint8_t i = 4; 13; i++)
-        {
-          WriteCoilToSlave(1, i, 0);
-          readDiscreteReg(1, i);
-          delay(50);
-          WriteCoilToSlave(1, i, 1);
-          readDiscreteReg(1, i);
-          delay(50);
-          readHoldingReg(1, 1);
-        }
-      */
-
-    // TelnetStream.println("Inside Loop");
-    /*
-      TelnetStream.println(WiFi.localIP());
-      if (bLCtl) {
-        expander->digitalWrite(LCD_BL, LOW);
-        cntlRemPin(1, 13, false);
-        bLCtl = false;
-        WriteCoilToSlave(1, 13, 0);
-      } else {
-        expander->digitalWrite(LCD_BL, HIGH);
-        cntlRemPin(1,13,true);
-        bLCtl = true;
-        WriteCoilToSlave(1, 13, 1);
-
-      }
-    */
-    // Serial.println(readDiscreteReg(0x01, doorCloseRegister + discreteOffset));
-    // Serial.print("Low to On: ");
-    // Serial.println( Serial.println(readDiscreteReg(0x01, lowOrHighReg + discreteOffset)));
-
-    /*
-        WriteDigiPin(2, true);
-        delay(2000);
-        WriteDigiPin(2, false);
-        delay(1000);
-    */
-    // Write message to the slave
-
+  // run every 5 seconds
+  if (actualMillis - prevEveryFiveSec >= everyFiveSec) {
+    // placeholder for periodic 5s tasks
     prevEveryFiveSec = actualMillis;
   }
 
-  ///////
-
-  // printLocalTime();  // it will take some time to sync time :)
   delay(1);
 }

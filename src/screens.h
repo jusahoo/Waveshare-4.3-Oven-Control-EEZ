@@ -11,17 +11,17 @@ typedef struct _objects_t {
     lv_obj_t *main;
     lv_obj_t *status_page;
     lv_obj_t *test_components_page;
-    lv_obj_t *temp_set_point_spin;
-    lv_obj_t *timer_set_spn;
     lv_obj_t *status_bar_contain;
     lv_obj_t *date_lbl;
     lv_obj_t *time_lbl;
     lv_obj_t *temperature_container;
     lv_obj_t *temp_actual_lbl;
+    lv_obj_t *temp_set_point_spin;
     lv_obj_t *temp_descrease_btn;
     lv_obj_t *temp_increase_btn;
     lv_obj_t *timer_ctn;
     lv_obj_t *timer_rem_lbl;
+    lv_obj_t *timer_set_spn;
     lv_obj_t *timer_decrease_btn;
     lv_obj_t *timer_increase_btn;
     lv_obj_t *start_btn;
@@ -54,8 +54,10 @@ void tick_screen_status_page();
 void create_screen_test_components_page();
 void tick_screen_test_components_page();
 
-void create_screens();
+void tick_screen_by_id(enum ScreensEnum screenId);
 void tick_screen(int screen_index);
+
+void create_screens();
 
 
 #ifdef __cplusplus
